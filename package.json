@@ -1,0 +1,30 @@
+{
+  "name": "graphql-codegen-hasura-schemas",
+  "version": "0.0.1-alpha.1",
+  "description": "A graphql codegen plugin for hasura schemas generation",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "generate-example": "graphql-codegen --config codegen.yml",
+    "prepublishOnly": "npm run build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "graphql",
+    "codegen",
+    "hasura",
+    "schemas"
+  ],
+  "author": "Toan Nguyen",
+  "license": "MIT",
+  "devDependencies": {
+    "@graphql-codegen/cli": "^5.0.0",
+    "@types/node": "^20.6.3",
+    "typescript": "^5.2.2"
+  },
+  "dependencies": {
+    "@graphql-codegen/plugin-helpers": "^5.0.1",
+    "graphql": "^16.8.1",
+    "radash": "^11.0.0"
+  }
+}

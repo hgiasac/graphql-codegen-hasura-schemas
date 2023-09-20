@@ -1,0 +1,1 @@
+# GraphQL Codegen plugin for Hasura Operations
