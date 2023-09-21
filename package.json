@@ -1,6 +1,6 @@
 {
   "name": "graphql-codegen-hasura-schemas",
-  "version": "0.0.1-alpha.1",
+  "version": "0.0.1-alpha.2",
   "description": "A graphql codegen plugin for hasura schemas generation",
   "main": "dist/index.js",
   "scripts": {

@@ -20,22 +20,6 @@ import { snake, camel } from "radash";
  */
 export type HasuraGraphQLConfig = {
   /**
-   * @description Set to true in order to print description as comments (using `#` instead of `"""`)
-   * @default false
-   *
-   * @exampleMarkdown
-   * ```yaml {7}
-   * schema: http://localhost:3000/graphql
-   * generates:
-   *   schema.graphql:
-   *     plugins:
-   *       - graphql-codegen-hasura-schemas
-   *     config:
-   *       commentDescriptions: true
-   * ```
-   */
-  commentDescriptions?: boolean;
-  /**
    * @description Set the list of table for crud operations
    *
    * @exampleMarkdown
@@ -46,10 +30,10 @@ export type HasuraGraphQLConfig = {
    *     plugins:
    *       - graphql-codegen-hasura-schemas
    *     config:
-   *       tables: ['user', 'role']
+   *       models: ['user', 'role']
    * ```
    */
-  tables?: string[];
+  models?: string[];
   /**
    * @description Set the max depth of nested objects
    * @default 1
@@ -68,24 +52,7 @@ export type HasuraGraphQLConfig = {
   maxDepth?: number;
 
   /**
-   * @description Disable fields with aggregate suffixes
-   * @default false
-   *
-   * @exampleMarkdown
-   * ```yaml {7}
-   * schema: http://localhost:3000/graphql
-   * generates:
-   *   schema.graphql:
-   *     plugins:
-   *       - graphql-codegen-hasura-schemas
-   *     config:
-   *       disableAggregateFields: true
-   * ```
-   */
-  disableAggregateFields?: boolean;
-
-  /**
-   * @description Disable fields in the list
+   * @description Disable fields that contain strings in the list
    * @default []
    *
    * @exampleMarkdown
@@ -96,43 +63,63 @@ export type HasuraGraphQLConfig = {
    *     plugins:
    *       - graphql-codegen-hasura-operations
    *     config:
-   *       disableFields: ["created_by", "updated_by"]
+   *       disableFields: ["created_by", "updated_by", "_aggregate"]
    * ```
    */
   disableFields?: string[];
+
+  /**
+   * @description If the role doesn't has mutation permissions, the pk_columns_input type will be hidden. The plugin try to find primary key fields in the output model
+   * @default ["id"]
+   *
+   * @exampleMarkdown
+   * ```yaml {7}
+   * schema: http://localhost:3000/graphql
+   * generates:
+   *   schema.graphql:
+   *     plugins:
+   *       - graphql-codegen-hasura-operations
+   *     config:
+   *       disableFields: ["created_by", "updated_by", "_aggregate"]
+   * ```
+   */
+  primaryKeyNames?: string[];
 };
 
-type ModelFieldSchema = {
+export type ModelFieldSchema = {
+  name: string;
   type: string;
   array: boolean;
   nullable: boolean;
 };
 
-type ModelSchemas = {
+export type ModelSchemas = {
+  primaryKeys: ModelFieldSchema[];
   permissions: {
+    get: boolean;
     insert: boolean;
     update: boolean;
     delete: boolean;
   };
-  model: Record<string, ModelFieldSchema>;
-  insertInput: Record<string, ModelFieldSchema>;
-  setInput: Record<string, ModelFieldSchema>;
+  model: ModelFieldSchema[];
+  insertInput: ModelFieldSchema[];
+  setInput: ModelFieldSchema[];
 };
 
 type BuildModelSchemaOptions = {
-  disableAggregateFields: boolean;
   disableFields: string[];
+  primaryKeyNames: string[];
 };
 
 export const plugin: PluginFunction<HasuraGraphQLConfig> = async (
   schema: GraphQLSchema,
   _documents,
-  { tables, disableAggregateFields, disableFields }
+  { models, disableFields, primaryKeyNames = ["id"] }
 ): Promise<string> => {
   return JSON.stringify(
-    buildModelSchemas(tables, schema, {
-      disableAggregateFields,
+    buildModelSchemas(models, schema, {
       disableFields,
+      primaryKeyNames,
     })
   );
 };
@@ -148,22 +135,24 @@ export const validate: PluginValidateFn<any> = async (
 };
 
 const buildModelSchemas = (
-  tables: string[],
+  models: string[],
   schema: GraphQLSchema,
   options: BuildModelSchemaOptions
 ): Record<string, ModelSchemas> => {
   const mutationFields = schema.getMutationType().getFields();
 
-  return tables.reduce((acc, modelName) => {
+  return models.reduce((acc, modelName) => {
     const fieldName = snake(modelName);
     const fieldInsertInputName = snake(`${fieldName}_insert_input`);
     const fieldSetInputName = snake(`${fieldName}_set_input`);
     const deleteFieldName = `delete_${fieldName}`;
+    const fieldPkColumnsName = snake(`${fieldName}_pk_columns_input`);
 
     const fieldNameCamelCase = camel(modelName);
     const fieldInsertInputNameCamelCase = camel(fieldInsertInputName);
     const fieldSetInputNameCamelCase = camel(fieldSetInputName);
     const deleteFieldNameCamelCase = camel(deleteFieldName);
+    const fieldPkColumnsNameCamelCase = camel(fieldPkColumnsName);
 
     const modelType = (
       isObjectType(schema.getType(fieldName))
@@ -183,27 +172,42 @@ const buildModelSchemas = (
         : schema.getType(fieldSetInputNameCamelCase)
     ) as GraphQLInputObjectType;
 
+    const pkInputType = (
+      isInputObjectType(schema.getType(fieldPkColumnsName))
+        ? schema.getType(fieldPkColumnsName)
+        : schema.getType(fieldPkColumnsNameCamelCase)
+    ) as GraphQLInputObjectType;
+
     const canDelete = Boolean(
       mutationFields[deleteFieldName] ??
         mutationFields[deleteFieldNameCamelCase]
     );
 
+    const modelSchemas = isObjectType(modelType)
+      ? buildModelSchema(modelType, options)
+      : [];
+
     const insertInput = isInputObjectType(insertInputType)
       ? buildModelSchema(insertInputType, options)
-      : null;
+      : [];
 
     const setInput = isInputObjectType(setInputType)
       ? buildModelSchema(setInputType, options)
-      : null;
+      : [];
+
+    const primaryKeys = isInputObjectType(pkInputType)
+      ? buildModelSchema(pkInputType, options)
+      : modelSchemas.filter((m) => options.primaryKeyNames.includes(m.name));
+    
     const result: ModelSchemas = {
-      model: isObjectType(modelType)
-        ? buildModelSchema(modelType, options)
-        : null,
+      primaryKeys,
+      model: modelSchemas,
       insertInput,
       setInput,
       permissions: {
-        insert: Boolean(insertInput),
-        update: Boolean(setInput),
+        get: modelSchemas.length > 0,
+        insert: insertInput.length > 0,
+        update: setInput.length > 0,
         delete: canDelete,
       },
     };
@@ -251,18 +255,18 @@ const getInnerSchemaType = (
 const buildModelSchema = (
   modelType: GraphQLObjectType | GraphQLInputObjectType,
   options: BuildModelSchemaOptions
-): Record<string, ModelFieldSchema> => {
+): ModelFieldSchema[] => {
   const fieldMap = modelType.getFields();
   return Object.keys(fieldMap).reduce((acc, key) => {
     if (
-      (options.disableAggregateFields && key.includes("_aggregate")) ||
-      options.disableFields?.includes(key)
+      options.disableFields?.some((disabledTerm) => key.includes(disabledTerm))
     ) {
       return acc;
     }
 
     const field = fieldMap[key];
     const schema = getInnerSchemaType(field.type, {
+      name: key,
       type: null,
       array: false,
       nullable: true,
@@ -272,9 +276,9 @@ const buildModelSchema = (
       return acc;
     }
 
-    return {
+    return [
       ...acc,
-      [key]: schema,
-    };
-  }, {});
+      schema,
+    ];
+  }, []);
 };
